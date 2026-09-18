@@ -1,9 +1,56 @@
 
-
 services:
 
   app:
-    image: php:8.1-apache
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM php:8.1-apache
+
+        ENV DEBIAN_FRONTEND=noninteractive
+
+        RUN apt-get update && apt-get install -y \
+            git \
+            unzip \
+            curl \
+            libzip-dev \
+            libpng-dev \
+            libjpeg62-turbo-dev \
+            libfreetype6-dev \
+            libonig-dev \
+            libxml2-dev \
+            libicu-dev \
+            && rm -rf /var/lib/apt/lists/*
+
+        RUN docker-php-ext-configure gd \
+            --with-freetype \
+            --with-jpeg
+
+        RUN docker-php-ext-install \
+            pdo_mysql \
+            mbstring \
+            exif \
+            pcntl \
+            bcmath \
+            gd \
+            zip
+
+        RUN curl -fsSL https://getcomposer.org/installer \
+            | php -- \
+            --install-dir=/usr/local/bin \
+            --filename=composer
+
+        RUN a2enmod rewrite
+
+        ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
+
+        RUN sed -ri \
+            -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' \
+            /etc/apache2/sites-available/*.conf \
+            /etc/apache2/apache2.conf
+
+        WORKDIR /var/www/html
+
     container_name: osums-app
     restart: unless-stopped
 
@@ -32,111 +79,71 @@ services:
     ports:
       - "8080:80"
 
-    command: >
-      bash -c "
-        set -e;
+    command:
+      - /bin/bash
+      - -c
+      - |
+        set -e
 
-        echo '======================================';
-        echo ' Instalando dependencias del sistema ';
-        echo '======================================';
+        echo "======================================"
+        echo " OSUMS - iniciando"
+        echo "======================================"
 
-        apt-get update;
+        cd /var/www/html
 
-        apt-get install -y
-          git
-          unzip
-          curl
-          libzip-dev
-          libpng-dev
-          libjpeg-dev
-          libfreetype6-dev
-          libonig-dev
-          libxml2-dev;
+        echo "PHP:"
+        php -v
 
-        echo '======================================';
-        echo ' Instalando extensiones PHP ';
-        echo '======================================';
+        echo "Composer:"
+        composer --version
 
-        docker-php-ext-configure gd
-          --with-freetype
-          --with-jpeg;
-
-        docker-php-ext-install
-          pdo_mysql
-          mbstring
-          exif
-          pcntl
-          bcmath
-          gd
-          zip;
-
-        echo '======================================';
-        echo ' Instalando Composer ';
-        echo '======================================';
-
-        if [ ! -f /usr/local/bin/composer ]; then
-          curl -sS https://getcomposer.org/installer |
-          php -- --install-dir=/usr/local/bin --filename=composer;
-        fi;
-
-        composer --version;
-
-        echo '======================================';
-        echo ' Instalando dependencias OSUMS ';
-        echo '======================================';
-
-        cd /var/www/html;
+        echo "======================================"
+        echo " Instalando dependencias"
+        echo "======================================"
 
         if [ -f composer.json ]; then
-          composer install
-            --no-interaction
-            --prefer-dist
-            --optimize-autoloader;
+          composer install \
+            --no-interaction \
+            --prefer-dist \
+            --optimize-autoloader
         else
-          echo 'ERROR: No se encontró composer.json';
-          exit 1;
-        fi;
+          echo "ERROR: No existe composer.json"
+          exit 1
+        fi
 
-        echo '======================================';
-        echo ' Configurando Laravel ';
-        echo '======================================';
+        echo "======================================"
+        echo " Configurando Laravel"
+        echo "======================================"
 
         if [ -f .env.example ] && [ ! -f .env ]; then
-          cp .env.example .env;
-        fi;
+          cp .env.example .env
+        fi
 
         if [ -f artisan ]; then
-          php artisan key:generate --force || true;
-          php artisan storage:link || true;
-          php artisan migrate --force || true;
-        fi;
+          php artisan key:generate --force || true
+          php artisan storage:link || true
+        fi
 
-        mkdir -p storage bootstrap/cache;
+        mkdir -p storage bootstrap/cache
 
-        chown -R www-data:www-data
-          storage
-          bootstrap/cache;
+        chown -R www-data:www-data \
+          storage \
+          bootstrap/cache
 
-        echo '======================================';
-        echo ' Configurando Apache ';
-        echo '======================================';
+        echo "======================================"
+        echo " Ejecutando migraciones"
+        echo "======================================"
 
-        a2enmod rewrite;
+        if [ -f artisan ]; then
+          php artisan migrate --force || true
+        fi
 
-        sed -i
-          's#DocumentRoot /var/www/html#DocumentRoot /var/www/html/public#'
-          /etc/apache2/sites-available/000-default.conf;
-
-        sed -i
-          's#<Directory /var/www/>#<Directory /var/www/html/public>#'
-          /etc/apache2/apache2.conf || true;
-
-        echo '======================================';
-        echo ' OSUMS iniciado ';
-        echo '======================================';
+        echo "======================================"
+        echo " OSUMS listo"
+        echo "======================================"
 
         apache2-foreground
-      "
+
 
   db:
     image: mariadb:10.6
@@ -154,12 +161,10 @@ services:
 
     healthcheck:
       test:
-        [
-          "CMD",
-          "healthcheck.sh",
-          "--connect",
-          "--innodb_initialized"
-        ]
+        - CMD
+        - healthcheck.sh
+        - --connect
+        - --innodb_initialized
       interval: 10s
       timeout: 5s
       retries: 10
@@ -169,3 +174,4 @@ volumes:
   osums_db:
   osums_vendor:
   osums_storage:
+
